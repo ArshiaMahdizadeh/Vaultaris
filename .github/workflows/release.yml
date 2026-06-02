@@ -1,0 +1,172 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Windows ──────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build — Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.10.0
+
+      - name: Build executable
+        run: pyinstaller vaultaris.spec
+
+      - name: Rename artifact
+        run: move dist\Vaultaris.exe dist\Vaultaris-windows.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/Vaultaris-windows.exe
+
+  # ── Linux ─────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Build — Linux
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
+            libxkbcommon-x11-0 libxkbcommon0 \
+            libegl1 libfontconfig1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.10.0
+
+      - name: Build executable
+        run: pyinstaller vaultaris.spec
+
+      - name: Package as tar.gz
+        run: |
+          cd dist
+          tar -czf Vaultaris-linux.tar.gz Vaultaris
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tar
+          path: dist/Vaultaris-linux.tar.gz
+
+  # ── macOS ─────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build — macOS
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.10.0
+
+      - name: Build executable
+        run: pyinstaller vaultaris.spec
+
+      - name: Package as tar.gz
+        run: |
+          cd dist
+          tar -czf Vaultaris-macos.tar.gz Vaultaris.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-tar
+          path: dist/Vaultaris-macos.tar.gz
+
+  # ── Create GitHub Release ─────────────────────────────────────────────────
+  release:
+    name: Publish Release
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Vaultaris ${{ github.ref_name }}"
+          body: |
+            ## Vaultaris ${{ github.ref_name }}
+
+            ### Downloads
+            | Platform | File |
+            |----------|------|
+            | Windows 10/11 (64-bit) | `Vaultaris-windows.exe` |
+            | Linux (x86_64) | `Vaultaris-linux.tar.gz` |
+            | macOS (Apple Silicon) | `Vaultaris-macos.tar.gz` |
+
+            ### Installation
+            **Windows** — download `Vaultaris-windows.exe` and run it. No installation needed.
+
+            **Linux** — extract and run:
+            ```bash
+            tar -xzf Vaultaris-linux.tar.gz
+            chmod +x Vaultaris
+            ./Vaultaris
+            ```
+
+            **macOS** — extract and move `Vaultaris.app` to your Applications folder.
+
+            ### First run
+            Click **Create New Vault** to create your first encrypted vault file (`.enc`).
+            Your master password is never stored — keep it safe.
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/windows-exe/Vaultaris-windows.exe
+            artifacts/linux-tar/Vaultaris-linux.tar.gz
+            artifacts/macos-tar/Vaultaris-macos.tar.gz
