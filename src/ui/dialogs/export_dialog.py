@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QDialogButtonBox, QWidget
 )
 from PyQt6.QtCore import Qt
-from src.core.exporters import export_encrypted_json, export_plain_json, export_pdf_emergency_sheet
+from src.core.exporters import export_encrypted_json, export_pdf_emergency_sheet
 
 class ExportDialog(QDialog):
     def __init__(self, vault, parent=None):
@@ -26,7 +26,7 @@ class ExportDialog(QDialog):
         # Format selection
         layout.addWidget(QLabel("Export Format:"))
         self.format_combo = QComboBox()
-        self.format_combo.addItems(["Encrypted JSON (.enc)", "Plain JSON (unsafe)", "PDF Emergency Sheet"])
+        self.format_combo.addItems(["Encrypted JSON (.enc)", "PDF Emergency Sheet"])
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
         layout.addWidget(self.format_combo)
 
@@ -66,8 +66,7 @@ class ExportDialog(QDialog):
         self._on_format_changed(0)
 
     def _on_format_changed(self, idx):
-        fmt = self.format_combo.currentText()
-        self.password_widget.setVisible(fmt != "Plain JSON (unsafe)")
+        pass
 
     def _browse(self):
         fmt = self.format_combo.currentText()
@@ -98,11 +97,9 @@ class ExportDialog(QDialog):
                 if not password:
                     QMessageBox.warning(self, "Password Required", "Enter a password to encrypt the export.")
                     return
+                if not self._check_password_strength(password):
+                    return
                 content = export_encrypted_json(items, password)
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-            elif fmt == "Plain JSON (unsafe)":
-                content = export_plain_json(items)
                 with open(path, 'w', encoding='utf-8') as f:
                     f.write(content)
             elif fmt == "PDF Emergency Sheet":
@@ -110,11 +107,23 @@ class ExportDialog(QDialog):
                 if not password:
                     QMessageBox.warning(self, "Password Required", "Set a password for the QR code content.")
                     return
+                if not self._check_password_strength(password):
+                    return
                 export_pdf_emergency_sheet(items, password, path)
             QMessageBox.information(self, "Export Successful", "Vault exported successfully.")
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
+
+    def _check_password_strength(self, password: str) -> bool:
+        if len(password) >= 12:
+            return True
+        words = password.split()
+        if len(words) >= 4:
+            return True
+        QMessageBox.warning(self, "Weak Password",
+            "Export password must be at least 12 characters or a passphrase of 4+ words.")
+        return False
 
     def _style(self):
         return """

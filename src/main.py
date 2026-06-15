@@ -1,3 +1,4 @@
+import hashlib
 import sys
 import os
 from PyQt6.QtWidgets import QApplication
@@ -15,10 +16,20 @@ def _assets_dir() -> str:
     return os.path.join(base, "assets")
 
 
+def _verify_font_hash(font_path: str) -> bool:
+    expected = "3a6eb02023cba21c9bf3e2e86c3e0920c3cf58e62e2c57e92db11e96af2af8c9"
+    try:
+        with open(font_path, "rb") as f:
+            actual = hashlib.sha256(f.read()).hexdigest()
+        return actual == expected
+    except Exception:
+        return False
+
+
 def load_material_icon_font():
     global MATERIAL_ICONS_FAMILY
     font_path = os.path.join(_assets_dir(), "fonts", "MaterialIcons-Regular.ttf")
-    if os.path.exists(font_path):
+    if os.path.exists(font_path) and _verify_font_hash(font_path):
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
             families = QFontDatabase.applicationFontFamilies(font_id)

@@ -7,6 +7,7 @@ class VaultMeta(BaseModel):
     salt: str
     verification_nonce: str
     verification_data: str
+    failure_count: int = 0
 
     @classmethod
     def create(cls, salt: bytes, verification_blob: tuple[bytes, bytes]) -> "VaultMeta":
@@ -28,6 +29,13 @@ class VaultMeta(BaseModel):
 
     def to_json(self) -> str:
         return self.model_dump_json()  # one line
+
+    def to_aad_json(self) -> str:
+        """Return JSON of fields that bind the ciphertext (excludes failure_count)."""
+        return json.dumps(
+            {k: v for k, v in self.model_dump().items() if k != "failure_count"},
+            separators=(",", ":"),
+        )
 
     @classmethod
     def from_json(cls, data: str) -> "VaultMeta":

@@ -54,6 +54,9 @@ class TotpSetupDialog(QDialog):
         if secret and not validate_secret(secret):
             QMessageBox.warning(self, "Error", "Invalid secret or URI. Leave blank to remove.")
             return
+        if secret.startswith("otpauth://") and not secret.startswith("otpauth://totp"):
+            QMessageBox.warning(self, "Error", "Only TOTP URIs are supported (otpauth://totp/...).")
+            return
         self.accept()
 
     def get_secret(self) -> str:

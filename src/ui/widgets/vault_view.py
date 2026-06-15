@@ -1,6 +1,7 @@
 """
 Vault content widget — main page of the dashboard.
 """
+import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QLineEdit, QLabel, QMenu, QMessageBox, QApplication,
@@ -369,7 +370,10 @@ class VaultView(QWidget):
             return
         data = self._get_sensitive_data(item)
         if data:
-            QApplication.clipboard().setText(data)
+            clipboard = QApplication.clipboard()
+            old_text = clipboard.text()
+            clipboard.setText(data)
+            self._old_clipboard = old_text
             self._set_status("Copied to clipboard — clears in 30 s", success=True)
             self.clipboard_timer.start(30_000)
         else:
@@ -384,9 +388,27 @@ class VaultView(QWidget):
         return ""
 
     def _clear_clipboard(self):
-        QApplication.clipboard().clear()
+        clipboard = QApplication.clipboard()
+        current = clipboard.text()
+        if hasattr(self, '_old_clipboard') and current == self._get_last_copied():
+            clipboard.setText(self._old_clipboard)
+        else:
+            clipboard.clear()
         self.clipboard_timer.stop()
         self._set_status("Clipboard cleared.")
+
+    def _get_last_copied(self) -> str:
+        return getattr(self, '_last_copied', "")
+
+    def _copy_field(self, value: str, label: str = "Data"):
+        if value:
+            clipboard = QApplication.clipboard()
+            self._old_clipboard = clipboard.text()
+            clipboard.setText(value)
+            self._last_copied = value
+            if sys.platform.startswith("linux"):
+                clipboard.clear(mode=QApplication.clipboard().Mode.Selection)
+            self._set_status(f"{label} copied!", success=True)
 
     # ── Context menu ──────────────────────────────────────────────────────────
     def _show_context_menu(self, pos):
@@ -438,7 +460,10 @@ class VaultView(QWidget):
 
     def _copy_totp(self, item: Item):
         try:
-            QApplication.clipboard().setText(generate_totp(item.totp_secret))
+            clipboard = QApplication.clipboard()
+            self._old_clipboard = clipboard.text()
+            clipboard.setText(generate_totp(item.totp_secret))
+            self._last_copied = generate_totp(item.totp_secret)
             self._set_status("TOTP code copied!", success=True)
         except Exception as e:
             QMessageBox.critical(self, "TOTP Error", str(e))

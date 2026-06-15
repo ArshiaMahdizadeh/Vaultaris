@@ -1,3 +1,4 @@
+import sys
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QPushButton,
     QProgressBar, QApplication
@@ -12,6 +13,7 @@ class TotpViewerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"TOTP - {title}" if title else "TOTP Code")
         self.setFixedSize(300, 200)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
         self.totp = get_totp_instance(secret)
         self.interval = self.totp.interval
         self._init_ui()
@@ -19,6 +21,11 @@ class TotpViewerDialog(QDialog):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_code)
         self.timer.start(1000)
+
+        self._auto_close_timer = QTimer(self)
+        self._auto_close_timer.timeout.connect(self._check_auto_close)
+        self._auto_close_timer.start(5000)
+        self._creation_time = time.monotonic()
 
     def _init_ui(self):
         layout = QVBoxLayout()
@@ -34,11 +41,17 @@ class TotpViewerDialog(QDialog):
         self.countdown_bar.setTextVisible(False)
         layout.addWidget(self.countdown_bar)
 
-        copy_btn = QPushButton("📋 Copy Code")
+        copy_btn = QPushButton("Copy Code")
         copy_btn.clicked.connect(self._copy_code)
         layout.addWidget(copy_btn)
 
         self.setLayout(layout)
+
+    def _check_auto_close(self):
+        if time.monotonic() - self._creation_time > 30:
+            self.timer.stop()
+            self._auto_close_timer.stop()
+            self.close()
 
     def _update_code(self):
         now = time.time()

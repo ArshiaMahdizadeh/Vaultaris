@@ -60,7 +60,9 @@ class CustomTemplateDialog(QDialog):
     def _add_template(self):
         name, ok = QInputDialog.getText(self, "Template Name", "Enter a unique name:")
         if ok and name.strip():
-            # Ensure unique
+            if len(self.templates) >= 50:
+                QMessageBox.warning(self, "Limit Reached", "Maximum 50 templates allowed.")
+                return
             if any(t['name'] == name.strip() for t in self.templates):
                 QMessageBox.warning(self, "Error", "Template name already exists.")
                 return
@@ -146,6 +148,9 @@ class TemplateFieldEditor(QDialog):
     def _add_field(self):
         name, ok = QInputDialog.getText(self, "Field Name", "Name:")
         if not ok or not name.strip():
+            return
+        if len(self.template["fields"]) >= 50:
+            QMessageBox.warning(self, "Limit Reached", "Maximum 50 fields per template allowed.")
             return
         type_, ok = QInputDialog.getItem(self, "Field Type", "Type:", ["text", "password", "number", "date", "email"], 0, False)
         if not ok:

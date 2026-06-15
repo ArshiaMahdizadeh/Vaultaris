@@ -2,6 +2,7 @@
 Export vault credentials to various formats.
 """
 import json
+import secrets
 import base64
 import io
 from src.core.crypto import encrypt, derive_key, generate_salt
@@ -11,42 +12,47 @@ from fpdf import FPDF
 import qrcode
 from qrcode.image.pil import PilImage
 
+
 def export_encrypted_json(items: list[Credential], master_password: str) -> str:
-    """
-    Export vault to an encrypted .enc file content (as string).
-    This is the same format as the vault file.
-    """
-    # Derive key from password (new salt each time)
     salt = generate_salt()
-    key = derive_key(master_password, salt)
-    # Verification blob
-    v_nonce, v_cipher = encrypt(b"MASTER_PASSWORD_OK", key)
+    key = derive_key(bytearray(master_password.encode("utf-8")), salt)
+
+    verification_plaintext = secrets.token_bytes(32)
+    v_nonce, v_cipher = encrypt(verification_plaintext, bytes(key))
     meta = VaultMeta.create(salt, (v_nonce, v_cipher))
-    # Items JSON
+
+    aad = meta.to_aad_json().encode("utf-8")
     items_json = json.dumps([item.model_dump() for item in items], indent=2).encode('utf-8')
-    nonce, ciphertext = encrypt(items_json, key)
-    # Build file content
+    nonce, ciphertext = encrypt(items_json, bytes(key), associated_data=aad)
+
     nonce_b64 = base64.b64encode(nonce).decode()
     cipher_b64 = base64.b64encode(ciphertext).decode()
     content = meta.to_json() + "\n" + nonce_b64 + "\n" + cipher_b64
     return content
 
-def export_plain_json(items: list[Credential]) -> str:
-    """Export as plain, unencrypted JSON (dangerous)."""
-    return json.dumps([item.model_dump() for item in items], indent=2)
+def export_pdf_emergency_sheet(items: list[Credential], export_password: str, output_path: str) -> None:
+    salt = generate_salt()
+    key = derive_key(bytearray(export_password.encode("utf-8")), salt)
 
-def export_pdf_emergency_sheet(items: list[Credential], master_password: str, output_path: str) -> None:
-    """
-    Create a PDF containing a QR code of the encrypted vault.
-    The user can print this and later scan the QR to recover the vault file.
-    """
-    encrypted_content = export_encrypted_json(items, master_password)
-    # Generate QR code
+    encrypted_items = []
+    for item in items:
+        item_json = json.dumps(item.model_dump(), indent=2).encode("utf-8")
+        nonce, ciphertext = encrypt(item_json, bytes(key))
+        encrypted_items.append({
+            "nonce": base64.b64encode(nonce).decode(),
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+        })
+
+    export_data = {
+        "salt": base64.b64encode(salt).decode(),
+        "items": encrypted_items,
+    }
+    encrypted_content = json.dumps(export_data)
+
     qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
     qr.add_data(encrypted_content)
     qr.make(fit=True)
     img = qr.make_image(image_factory=PilImage, fill_color="black", back_color="white")
-    # Save QR code to a temporary byte stream and insert into PDF
     img_bytes = io.BytesIO()
     img.save(img_bytes, format='PNG')
     img_bytes.seek(0)
@@ -54,15 +60,20 @@ def export_pdf_emergency_sheet(items: list[Credential], master_password: str, ou
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", size=12)
-    pdf.cell(0, 10, "Emergency Recovery Sheet - Vaultaris", ln=True, align='C')
+    try:
+        pdf.cell(0, 10, "Emergency Recovery Sheet - Vaultaris", ln=True, align='C')
+    except Exception as e:
+        raise RuntimeError(f"Failed to write PDF header: {e}")
     pdf.ln(10)
     pdf.set_font("Helvetica", size=10)
-    pdf.multi_cell(0, 6, "Scan this QR code with the Vaultaris app to restore your vault. You will need your master password.")
+    pdf.multi_cell(0, 6, "Scan this QR code with the Vaultaris app to restore your vault. You will need your export password.")
     pdf.ln(5)
-    # Insert QR image (centered)
     page_width = pdf.w - 2*pdf.l_margin
-    qr_width = min(100, page_width)  # scale QR to fit
+    qr_width = min(100, page_width)
     x = pdf.w/2 - qr_width/2
     y = pdf.get_y()
-    pdf.image(img_bytes, x=x, y=y, w=qr_width)
+    try:
+        pdf.image(img_bytes, x=x, y=y, w=qr_width)
+    except Exception as e:
+        raise RuntimeError(f"Failed to embed QR code image in PDF: {e}")
     pdf.output(output_path)

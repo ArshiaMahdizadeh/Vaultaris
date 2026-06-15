@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from src.core.vault_manager import VaultManager
-from src.core.importers import import_csv, import_bitwarden_json, import_keepass, import_1password_csv
-from src.core.exporters import export_encrypted_json, export_plain_json, export_pdf_emergency_sheet
+from src.core.importers import import_csv, import_bitwarden_json, import_keepass, import_1password_csv, _dedup
+from src.core.exporters import export_encrypted_json, export_pdf_emergency_sheet
 
 
 def _section_label(text: str) -> QLabel:
@@ -135,9 +135,25 @@ class ImportExportWidget(QWidget):
             else:
                 return
 
+            existing_items = self.manager.get_items() if self.manager.active_vault else []
+            creds, skipped = _dedup(creds, existing_items)
+
+            if skipped:
+                QMessageBox.information(self, "Duplicates Skipped",
+                    f"{skipped} duplicate(s) were skipped based on title, username, and URL.")
+
+            if not creds:
+                QMessageBox.information(self, "Nothing to Import", "All items already exist in the vault.")
+                return
+
+            preview_lines = [f"{c.title} - {c.username}" for c in creds[:20]]
+            if len(creds) > 20:
+                preview_lines.append(f"... and {len(creds) - 20} more")
+            preview_text = "\n".join(preview_lines)
+
             reply = QMessageBox.question(
                 self, "Confirm Import",
-                f"Add {len(creds)} item(s) to the active vault?",
+                f"Add {len(creds)} item(s) to the active vault?\n\n{preview_text}",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
@@ -146,6 +162,8 @@ class ImportExportWidget(QWidget):
                 QMessageBox.information(self, "Done", f"{len(creds)} item(s) imported.")
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
+        finally:
+            self.kdbx_password_edit.clear()
 
     # ── Export tab ────────────────────────────────────────────────────────────
     def _build_export_tab(self) -> QWidget:
@@ -158,7 +176,6 @@ class ImportExportWidget(QWidget):
         self.export_format_combo = QComboBox()
         self.export_format_combo.addItems([
             "Encrypted JSON (.enc)",
-            "Plain JSON (unencrypted)",
             "PDF Emergency Sheet",
         ])
         self.export_format_combo.currentIndexChanged.connect(self._on_export_format_changed)
@@ -199,19 +216,12 @@ class ImportExportWidget(QWidget):
         return page
 
     def _on_export_format_changed(self):
-        fmt = self.export_format_combo.currentText()
-        needs_pwd = "Plain JSON" not in fmt
-        self.export_password_edit.setEnabled(needs_pwd)
-        self.export_password_edit.setPlaceholderText(
-            "Password to protect the export" if needs_pwd else "Not required for plain JSON"
-        )
+        pass
 
     def _browse_export(self):
         fmt = self.export_format_combo.currentText()
         if "PDF" in fmt:
             filt = "PDF Files (*.pdf)"
-        elif "Plain" in fmt:
-            filt = "JSON Files (*.json)"
         else:
             filt = "Encrypted Vault (*.enc)"
         path, _ = QFileDialog.getSaveFileName(self, "Save Export", "", filt)
@@ -235,17 +245,6 @@ class ImportExportWidget(QWidget):
                     QMessageBox.warning(self, "Password Required", "Enter an export password.")
                     return
                 content = export_encrypted_json(items, pwd)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(content)
-            elif fmt == "Plain JSON (unencrypted)":
-                reply = QMessageBox.warning(
-                    self, "Security Warning",
-                    "Plain JSON export contains unencrypted passwords.\nContinue?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
-                    return
-                content = export_plain_json(items)
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
             elif fmt == "PDF Emergency Sheet":

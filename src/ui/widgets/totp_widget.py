@@ -1,3 +1,4 @@
+import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QProgressBar, QPushButton, QApplication, QFrame
@@ -80,6 +81,7 @@ class TotpWidget(QWidget):
     def __init__(self, manager: VaultManager, parent=None):
         super().__init__(parent)
         self.manager = manager
+        self._last_period = None
         self._init_ui()
         self._timer = QTimer()
         self._timer.timeout.connect(self._update_codes)
@@ -132,21 +134,29 @@ class TotpWidget(QWidget):
 
     def _update_codes(self):
         now = time.time()
+        current_period = int(now // 30)
+        needs_rerender = self._last_period is None or current_period != self._last_period
+        self._last_period = current_period
+
         for i in range(self.totp_list.count()):
             li = self.totp_list.item(i)
             widget = self.totp_list.itemWidget(li)
             if widget and hasattr(widget, "totp_secret"):
                 try:
                     totp = get_totp_instance(widget.totp_secret)
-                    widget.code_label.setText(totp.now())
+                    if needs_rerender or not hasattr(widget, '_rendered_period') or widget._rendered_period != current_period:
+                        code = totp.now()
+                        digits = totp.digits
+                        widget.code_label.setText(f"{int(code):0{digits}d}")
+                        widget._rendered_period = current_period
                     remaining = int(totp.interval - now % totp.interval)
                     widget.progress.setMaximum(int(totp.interval))
                     widget.progress.setValue(remaining)
-                    # Colour warning when < 5 s
                     color = "#f05c5c" if remaining <= 5 else "#4f8ef7"
-                    widget.code_label.setStyleSheet(
-                        f"color: {color}; background: transparent; letter-spacing: 4px;"
-                    )
+                    if remaining <= 5:
+                        widget.code_label.setStyleSheet(
+                            f"color: {color}; background: transparent; letter-spacing: 4px;"
+                        )
                     widget.progress.setStyleSheet(f"""
                         QProgressBar {{ background: #2c2c42; border: none; border-radius: 3px; }}
                         QProgressBar::chunk {{ background: {color}; border-radius: 3px; }}
@@ -156,6 +166,7 @@ class TotpWidget(QWidget):
 
     def _copy_code(self, secret: str):
         try:
-            QApplication.clipboard().setText(generate_totp(secret))
+            clipboard = QApplication.clipboard()
+            clipboard.setText(generate_totp(secret))
         except Exception:
             pass

@@ -191,6 +191,10 @@ class ItemDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout()
 
+        self.custom_title_edit = QLineEdit()
+        layout.addWidget(QLabel("Title:"))
+        layout.addWidget(self.custom_title_edit)
+
         template_layout = QHBoxLayout()
         template_layout.addWidget(QLabel("Template:"))
         self.custom_template_combo = QComboBox()
@@ -325,14 +329,11 @@ class ItemDialog(QDialog):
             self.crypto_seed_phrase_edit.setText(it.crypto_seed_phrase or "")
             self.crypto_notes_edit.setText(it.notes)
         elif it.type == ItemType.CUSTOM:
-            # Template selection
             tmpl_name = it.custom_template_id or ""
             idx_t = self.custom_template_combo.findText(tmpl_name)
             if idx_t >= 0:
                 self.custom_template_combo.setCurrentIndex(idx_t)
-            # Populate dynamic fields
-            # We must do this after the template combo has triggered field creation.
-            # We'll load custom fields from it.custom_fields
+            self.custom_title_edit.setText(it.title)
             self._apply_custom_field_values(it.custom_fields)
             self.custom_notes_edit.setText(it.notes)
 
@@ -390,9 +391,8 @@ class ItemDialog(QDialog):
             it.crypto_seed_phrase = self.crypto_seed_phrase_edit.toPlainText() or None
             it.notes = self.crypto_notes_edit.toPlainText()
         elif it.type == ItemType.CUSTOM:
-            it.title = "Custom Item"  # user could still set a title? We'll use notes maybe.
+            it.title = self.custom_title_edit.text()
             it.custom_template_id = self.custom_template_combo.currentData()["name"] if self.custom_template_combo.currentData() else None
-            # Collect custom field values
             custom_fields = {}
             if hasattr(self, 'custom_fields_widgets'):
                 for name, widget in self.custom_fields_widgets.items():

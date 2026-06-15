@@ -1,3 +1,4 @@
+import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QSpinBox, QCheckBox, QPushButton, QGroupBox, QGridLayout,
@@ -230,7 +231,11 @@ class GeneratorWidget(QWidget):
         pwd = self.preview_edit.text()
         if not pwd or pwd == "Error":
             return
-        QApplication.clipboard().setText(pwd)
+        clipboard = QApplication.clipboard()
+        self._old_clipboard = clipboard.text()
+        clipboard.setText(pwd)
+        if sys.platform.startswith("linux"):
+            clipboard.clear(mode=QApplication.clipboard().Mode.Selection)
         self._copied = True
         self.copy_btn.setText("Copied!")
         self.copy_btn.setStyleSheet("""
@@ -244,7 +249,11 @@ class GeneratorWidget(QWidget):
         self.clipboard_timer.start(30_000)
 
     def _clear_clipboard(self):
-        QApplication.clipboard().clear()
+        clipboard = QApplication.clipboard()
+        if hasattr(self, '_old_clipboard') and clipboard.text() == self.preview_edit.text():
+            clipboard.setText(self._old_clipboard)
+        else:
+            clipboard.clear()
         self.clipboard_timer.stop()
         self._reset_copy_btn()
 

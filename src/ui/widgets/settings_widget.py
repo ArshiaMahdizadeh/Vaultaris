@@ -1,3 +1,4 @@
+import base64
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QSpinBox,
     QCheckBox, QLabel, QLineEdit, QPushButton, QFileDialog,
@@ -6,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from src.utils.config import Config
 from src.ui.themes.theme_manager import set_theme, get_theme
+from src.core.crypto import hash_password
 
 
 def _section(text: str) -> QLabel:
@@ -162,7 +164,7 @@ class SettingsWidget(QWidget):
             self.theme_combo.setCurrentIndex(idx)
 
         self.duress_enabled.setChecked(Config.get("duress_enabled", False))
-        self.duress_password.setText(Config.get("duress_password", ""))
+        self.duress_password.setText("")
         self.decoy_path.setText(Config.get("decoy_vault_path", ""))
         self.block_capture.setChecked(Config.get("block_screen_capture", True))
         self.lock_memory.setChecked(Config.get("lock_memory", True))
@@ -177,7 +179,14 @@ class SettingsWidget(QWidget):
         set_theme(theme)
 
         Config.set("duress_enabled", self.duress_enabled.isChecked())
-        Config.set("duress_password", self.duress_password.text())
+        duress_pw = self.duress_password.text()
+        if duress_pw:
+            salt, h = hash_password(duress_pw)
+            Config.set("duress_password_hash", base64.b64encode(h).decode())
+            Config.set("duress_password_salt", base64.b64encode(salt).decode())
+        else:
+            Config.set("duress_password_hash", "")
+            Config.set("duress_password_salt", "")
         Config.set("decoy_vault_path", self.decoy_path.text())
         Config.set("block_screen_capture", self.block_capture.isChecked())
         Config.set("lock_memory", self.lock_memory.isChecked())

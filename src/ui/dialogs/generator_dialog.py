@@ -1,3 +1,4 @@
+import sys
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QSpinBox, QCheckBox, QPushButton, QGroupBox, QGridLayout, QApplication,
@@ -104,12 +105,20 @@ class GeneratorDialog(QDialog):
     def _copy(self):
         pwd = self.preview_edit.text()
         if pwd:
-            QApplication.clipboard().setText(pwd)
-            self.strength_label.setText("📋 Copied! (auto-clear 30s)")
+            clipboard = QApplication.clipboard()
+            self._old_clipboard = clipboard.text()
+            clipboard.setText(pwd)
+            if sys.platform.startswith("linux"):
+                clipboard.clear(mode=QApplication.clipboard().Mode.Selection)
+            self.strength_label.setText("Copied! (auto-clear 30s)")
             self.clipboard_timer.start(30000)
 
     def _clear_clipboard(self):
-        QApplication.clipboard().clear()
+        clipboard = QApplication.clipboard()
+        if hasattr(self, '_old_clipboard') and clipboard.text() == self.preview_edit.text():
+            clipboard.setText(self._old_clipboard)
+        else:
+            clipboard.clear()
         self.clipboard_timer.stop()
         self.strength_label.setText("Clipboard cleared.")
 

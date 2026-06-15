@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
-from src.core.audit import analyze_vault, check_password_breach
+from src.core.audit import analyze_vault, check_passwords_breach_batch
 from src.core.vault import Vault
 
 class BreachCheckThread(QThread):
@@ -15,18 +15,22 @@ class BreachCheckThread(QThread):
     result = pyqtSignal(int)  # count of breached passwords
     error = pyqtSignal(str)
 
-    def __init__(self, passwords):
+    def __init__(self, items):
         super().__init__()
-        self.passwords = passwords
+        self.items = items
 
     def run(self):
+        passwords = [it.password for it in self.items if it.password]
+        if not passwords:
+            self.result.emit(0)
+            return
+        counts = check_passwords_breach_batch(passwords)
         breached = 0
-        for pwd in self.passwords:
-            count = check_password_breach(pwd)
-            if count < 0:
+        for c in counts:
+            if c < 0:
                 self.error.emit("Network error or API limit reached.")
                 return
-            if count > 0:
+            if c > 0:
                 breached += 1
         self.result.emit(breached)
 
@@ -113,10 +117,16 @@ class AuditDialog(QDialog):
         self.breach_btn.setEnabled(False)
         self.breach_btn.setText("Checking...")
 
-        passwords = [item.password for item in self.items]
-        self.thread = BreachCheckThread(passwords)
+        has_passwords = any(it.password for it in self.items)
+        if not has_passwords:
+            self.breach_btn.setEnabled(True)
+            self.breach_btn.setText("Check for Breaches")
+            QMessageBox.information(self, "No Passwords", "No password items to check.")
+            return
+        self.thread = BreachCheckThread(self.items)
         self.thread.result.connect(self._on_breach_done)
         self.thread.error.connect(self._on_breach_error)
+        self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
     def _on_breach_done(self, breach_count):
@@ -135,6 +145,12 @@ class AuditDialog(QDialog):
         self.breach_btn.setEnabled(True)
         self.breach_btn.setText("🔍 Check for Breaches")
         QMessageBox.warning(self, "Breach Check Failed", msg)
+
+    def closeEvent(self, event):
+        if hasattr(self, "thread") and self.thread is not None:
+            self.thread.quit()
+            self.thread.wait(2000)
+        event.accept()
 
     def _style(self):
         return """

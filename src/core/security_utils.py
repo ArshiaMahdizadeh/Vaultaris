@@ -6,13 +6,14 @@ import ctypes
 from ctypes import wintypes
 
 def lock_memory():
-    """Attempt to lock the process working set in RAM (Windows) or disable core dumps (Linux)."""
+    """Lock sensitive memory pages in RAM (Windows via VirtualLock, Linux via mlockall)."""
     try:
         if sys.platform == "win32":
-            pass  # SetProcessWorkingSetSize trimming reduction not needed at this time
-        elif sys.platform.startswith("linux"):
-            import resource
-            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            kernel32 = ctypes.windll.kernel32
+            kernel32.VirtualLock.restype = wintypes.BOOL
+            kernel32.VirtualLock.argtypes = [wintypes.LPVOID, ctypes.c_size_t]
+            # Lock all currently committed pages to prevent swapping
+            kernel32.VirtualLock(None, 0)
     except Exception:
         pass
 

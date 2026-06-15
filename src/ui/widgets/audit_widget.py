@@ -1,30 +1,40 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QProgressBar, QMessageBox, QFrame
+    QListWidget, QListWidgetItem, QProgressBar, QMessageBox, QFrame,
+    QInputDialog, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QEvent
 from src.core.vault_manager import VaultManager
-from src.core.audit import analyze_vault, check_password_breach
+from src.core.audit import analyze_vault, check_passwords_breach_batch
 
 
 class BreachCheckThread(QThread):
-    result = pyqtSignal(int)
+    result = pyqtSignal(dict)
     error  = pyqtSignal(str)
 
-    def __init__(self, passwords):
+    def __init__(self, items):
         super().__init__()
-        self.passwords = passwords
+        self.items = items
 
     def run(self):
-        breached = 0
-        for pwd in self.passwords:
-            count = check_password_breach(pwd)
-            if count < 0:
-                self.error.emit("Network error or API limit reached.")
-                return
-            if count > 0:
-                breached += 1
-        self.result.emit(breached)
+        passwords = [it.password for it in self.items if it.password]
+        if not passwords:
+            self.result.emit({})
+            return
+        counts = check_passwords_breach_batch(passwords)
+        breach_details = {}
+        pw_idx = 0
+        for idx, it in enumerate(self.items):
+            if it.password:
+                if pw_idx < len(counts):
+                    c = counts[pw_idx]
+                    if c < 0:
+                        self.error.emit("Network error or API limit reached.")
+                        return
+                    if c > 0:
+                        breach_details[idx] = c
+                pw_idx += 1
+        self.result.emit(breach_details)
 
 
 class StatCard(QFrame):
@@ -60,8 +70,8 @@ class AuditWidget(QWidget):
         super().__init__(parent)
         self.manager = manager
         self.breach_count = 0
+        self.breach_details = {}
         self._init_ui()
-        self._run_analysis()
 
     def _init_ui(self):
         root = QVBoxLayout(self)
@@ -126,13 +136,25 @@ class AuditWidget(QWidget):
             cards_row.addWidget(c)
         root.addLayout(cards_row)
 
-        # ── Issues list ──
+        # ── Issues table ──
         issues_lbl = QLabel("Issues Found")
         issues_lbl.setStyleSheet("color: #8888aa; font-size: 11px; font-weight: 600; letter-spacing: 1px;")
         root.addWidget(issues_lbl)
 
-        self.issues_list = QListWidget()
-        root.addWidget(self.issues_list, stretch=1)
+        self.issues_table = QTableWidget()
+        self.issues_table.setColumnCount(3)
+        self.issues_table.setHorizontalHeaderLabels(["Item", "Issues", "Breaches"])
+        self.issues_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.issues_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.issues_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.issues_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.issues_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        root.addWidget(self.issues_table, stretch=1)
+
+    def _mask_username(self, username: str) -> str:
+        if not username or len(username) <= 2:
+            return username or ""
+        return username[0] + "*" * (len(username) - 2) + username[-1]
 
     def _run_analysis(self):
         try:
@@ -165,25 +187,28 @@ class AuditWidget(QWidget):
         self.card_old.set_value(str(result["old_count"]))
         self.card_breach.set_value(str(self.breach_count))
 
-        self.issues_list.clear()
+        self.issues_table.setRowCount(0)
         for detail in result["details"]:
             issues_text = "  ·  ".join(detail["issues"])
-            text = f"{detail['title']}"
-            if detail["username"]:
-                text += f"  ({detail['username']})"
-            text += f"  —  {issues_text}"
-            li = QListWidgetItem(text)
-            li.setForeground(Qt.GlobalColor.white)
-            self.issues_list.addItem(li)
+            masked_user = self._mask_username(detail.get("username", ""))
+            title_text = detail["title"]
+            if masked_user:
+                title_text += f"  ({masked_user})"
+            breach_count = self.breach_details.get(detail.get("index", -1), 0)
+            row = self.issues_table.rowCount()
+            self.issues_table.insertRow(row)
+            self.issues_table.setItem(row, 0, QTableWidgetItem(title_text))
+            self.issues_table.setItem(row, 1, QTableWidgetItem(issues_text))
+            self.issues_table.setItem(row, 2, QTableWidgetItem(str(breach_count) if breach_count else ""))
 
         if not result["details"]:
-            li = QListWidgetItem("No issues found — great job!")
-            li.setForeground(Qt.GlobalColor.green)
-            self.issues_list.addItem(li)
+            self.issues_table.setRowCount(1)
+            self.issues_table.setSpan(0, 0, 1, 3)
+            self.issues_table.setItem(0, 0, QTableWidgetItem("No issues found — great job!"))
 
     def _run_breach_check(self):
         self.breach_btn.setEnabled(False)
-        self.breach_btn.setText("Checking…")
+        self.breach_btn.setText("Checking...")
         try:
             items = self.manager.get_items() if self.manager.active_vault else []
         except RuntimeError:
@@ -191,25 +216,38 @@ class AuditWidget(QWidget):
             self.breach_btn.setText("Check Breaches (HIBP)")
             QMessageBox.warning(self, "Locked", "Vault is locked.")
             return
-        passwords = [it.password for it in items if it.password]
-        if not passwords:
+
+        # Re-auth dialog
+        password, ok = QInputDialog.getText(
+            self, "Re-authenticate", "Enter master password to run breach check:",
+            echo=QLineEdit.EchoMode.Password
+        )
+        if not ok or not password:
+            self.breach_btn.setEnabled(True)
+            self.breach_btn.setText("Check Breaches (HIBP)")
+            return
+
+        has_passwords = any(it.password for it in items)
+        if not has_passwords:
             self.breach_btn.setEnabled(True)
             self.breach_btn.setText("Check Breaches (HIBP)")
             QMessageBox.information(self, "No Passwords", "No password items to check.")
             return
-        self.thread = BreachCheckThread(passwords)
+        self.thread = BreachCheckThread(items)
         self.thread.result.connect(self._on_breach_done)
         self.thread.error.connect(self._on_breach_error)
+        self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
-    def _on_breach_done(self, count):
-        self.breach_count = count
+    def _on_breach_done(self, breach_details: dict):
+        self.breach_details = breach_details
+        self.breach_count = len(breach_details)
         self.breach_btn.setEnabled(True)
         self.breach_btn.setText("Check Breaches (HIBP)")
         self._run_analysis()
-        if count:
+        if self.breach_count:
             QMessageBox.warning(self, "Breach Check",
-                f"{count} password(s) found in known data breaches.\nChange them immediately.")
+                f"{self.breach_count} password(s) found in known data breaches.\nChange them immediately.")
         else:
             QMessageBox.information(self, "Breach Check", "No breached passwords found.")
 
@@ -217,3 +255,9 @@ class AuditWidget(QWidget):
         self.breach_btn.setEnabled(True)
         self.breach_btn.setText("Check Breaches (HIBP)")
         QMessageBox.warning(self, "Error", msg)
+
+    def closeEvent(self, event):
+        if hasattr(self, "thread") and self.thread is not None:
+            self.thread.quit()
+            self.thread.wait(2000)
+        event.accept()

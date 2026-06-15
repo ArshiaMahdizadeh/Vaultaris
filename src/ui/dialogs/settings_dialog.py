@@ -1,10 +1,13 @@
+import base64
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QSpinBox,
     QCheckBox, QDialogButtonBox, QLabel, QLineEdit,
     QFileDialog, QPushButton, QHBoxLayout, QTabWidget, QWidget, QComboBox
 )
-from src.utils.config import Config
+from PyQt6.QtCore import QTimer
+from src.utils.config import Config, ALLOWED_PANIC_SHORTCUTS
 from src.ui.themes.theme_manager import get_stylesheet, set_theme, get_theme
+from src.core.crypto import hash_password
 
 
 class SettingsDialog(QDialog):
@@ -50,8 +53,8 @@ class SettingsDialog(QDialog):
         self.idle_spin = QSpinBox()
         self.idle_spin.setRange(1, 120)
         self.idle_spin.setSuffix(" minutes")
-        general_form.addRow("Auto‑lock after:", self.idle_spin)
-        self.lock_on_idle_check = QCheckBox("Enable auto‑lock on idle")
+        general_form.addRow("Auto-lock after:", self.idle_spin)
+        self.lock_on_idle_check = QCheckBox("Enable auto-lock on idle")
         general_form.addRow(self.lock_on_idle_check)
         self.lock_on_sleep_check = QCheckBox("Lock on system sleep")
         general_form.addRow(self.lock_on_sleep_check)
@@ -96,10 +99,10 @@ class SettingsDialog(QDialog):
         self.lock_memory_check = QCheckBox("Lock sensitive memory")
         adv_form.addRow(self.lock_memory_check)
 
-        # Panic shortcut
-        self.panic_shortcut_edit = QLineEdit()
-        self.panic_shortcut_edit.setPlaceholderText("e.g., Ctrl+Shift+L")
-        adv_form.addRow("Panic shortcut:", self.panic_shortcut_edit)
+        # Panic shortcut (restricted enum via QComboBox)
+        self.panic_shortcut_combo = QComboBox()
+        self.panic_shortcut_combo.addItems(ALLOWED_PANIC_SHORTCUTS)
+        adv_form.addRow("Panic shortcut:", self.panic_shortcut_combo)
 
         adv_tab.setLayout(adv_form)
         tabs.addTab(adv_tab, "Advanced Security")
@@ -141,11 +144,15 @@ class SettingsDialog(QDialog):
             self.theme_combo.setCurrentIndex(idx)
 
         self.duress_enabled_check.setChecked(Config.get("duress_enabled", False))
-        self.duress_password_edit.setText(Config.get("duress_password", ""))
+        self.duress_password_edit.setText("")
         self.decoy_path_edit.setText(Config.get("decoy_vault_path", ""))
         self.block_capture_check.setChecked(Config.get("block_screen_capture", True))
         self.lock_memory_check.setChecked(Config.get("lock_memory", True))
-        self.panic_shortcut_edit.setText(Config.get("panic_shortcut", "Ctrl+Shift+L"))
+
+        current_shortcut = Config.get("panic_shortcut", "Ctrl+Shift+L")
+        idx = self.panic_shortcut_combo.findText(current_shortcut)
+        if idx >= 0:
+            self.panic_shortcut_combo.setCurrentIndex(idx)
 
     def _save(self):
         Config.set("idle_timeout_minutes", self.idle_spin.value())
@@ -156,11 +163,18 @@ class SettingsDialog(QDialog):
         set_theme(theme)
 
         Config.set("duress_enabled", self.duress_enabled_check.isChecked())
-        Config.set("duress_password", self.duress_password_edit.text())
+        duress_pw = self.duress_password_edit.text()
+        if duress_pw:
+            salt, h = hash_password(duress_pw)
+            Config.set("duress_password_hash", base64.b64encode(h).decode())
+            Config.set("duress_password_salt", base64.b64encode(salt).decode())
+        else:
+            Config.set("duress_password_hash", "")
+            Config.set("duress_password_salt", "")
         Config.set("decoy_vault_path", self.decoy_path_edit.text())
         Config.set("block_screen_capture", self.block_capture_check.isChecked())
         Config.set("lock_memory", self.lock_memory_check.isChecked())
-        Config.set("panic_shortcut", self.panic_shortcut_edit.text())
+        Config.set("panic_shortcut", self.panic_shortcut_combo.currentText())
 
         # Apply theme to entire app
         main_win = self.window()

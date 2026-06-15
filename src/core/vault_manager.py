@@ -1,3 +1,4 @@
+import hashlib
 import os
 from typing import Dict, List, Optional
 from src.core.vault import Vault
@@ -26,45 +27,56 @@ class VaultManager:
         if self.active_vault is None:
             raise RuntimeError("No vault is active. Please open a vault first.")
 
-    def open_vault(self, file_path: str, password: str) -> bool:
-        # If the vault is already in memory, check its state
-        if file_path in self._vaults:
-            vault = self._vaults[file_path]
-            if not vault.is_locked:
-                # Already open and unlocked – just switch to it
-                self._active_path = file_path
-                Config.set("active_vault", file_path)
-                return True
-            else:
-                # Vault exists but is locked – re‑open with password
-                success = vault.open(password, file_path)
-                if success:
+    def open_vault(self, file_path: str, password: str, progress_cb=None) -> bool:
+        file_path = os.path.normpath(os.path.abspath(file_path))
+        pw = bytearray(password.encode("utf-8"))
+        try:
+            if file_path in self._vaults:
+                vault = self._vaults[file_path]
+                if not vault.is_locked:
                     self._active_path = file_path
                     Config.set("active_vault", file_path)
-                return success
+                    self._update_recent_vaults(file_path)
+                    return True
+                else:
+                    success = vault.open(pw, file_path, progress_cb=progress_cb)
+                    if success:
+                        self._active_path = file_path
+                        Config.set("active_vault", file_path)
+                        self._update_recent_vaults(file_path)
+                    return success
 
-        # Not in memory at all – create a new Vault instance and open it
-        vault = Vault()
-        success = vault.open(password, file_path)
-        if success:
+            vault = Vault()
+            success = vault.open(pw, file_path, progress_cb=progress_cb)
+            if success:
+                self._vaults[file_path] = vault
+                self._active_path = file_path
+                self._update_recent_vaults(file_path)
+                Config.set("active_vault", file_path)
+            return success
+        finally:
+            for i in range(len(pw)):
+                pw[i] = 0
+
+    def create_vault(self, file_path: str, password: str, progress_cb=None) -> bool:
+        file_path = os.path.normpath(os.path.abspath(file_path))
+        if file_path in self._vaults:
+            return False
+        pw = bytearray(password.encode("utf-8"))
+        try:
+            vault = Vault()
+            vault.create(pw, file_path, progress_cb=progress_cb)
             self._vaults[file_path] = vault
             self._active_path = file_path
             self._update_recent_vaults(file_path)
             Config.set("active_vault", file_path)
-        return success
-
-    def create_vault(self, file_path: str, password: str) -> bool:
-        if file_path in self._vaults:
-            return False
-        vault = Vault()
-        vault.create(password, file_path)
-        self._vaults[file_path] = vault
-        self._active_path = file_path
-        self._update_recent_vaults(file_path)
-        Config.set("active_vault", file_path)
-        return True
+            return True
+        finally:
+            for i in range(len(pw)):
+                pw[i] = 0
 
     def close_vault(self, file_path: str):
+        file_path = os.path.normpath(os.path.abspath(file_path))
         if file_path in self._vaults:
             self._vaults[file_path].lock()
             del self._vaults[file_path]
@@ -74,6 +86,7 @@ class VaultManager:
         self._update_recent_vaults(remove=file_path)
 
     def switch_vault(self, file_path: str):
+        file_path = os.path.normpath(os.path.abspath(file_path))
         if file_path in self._vaults:
             self._active_path = file_path
             Config.set("active_vault", file_path)
@@ -103,10 +116,16 @@ class VaultManager:
     def _update_recent_vaults(self, file_path: str = None, remove: str = None):
         recent = Config.get("recent_vaults", [])
         if remove:
-            recent = [p for p in recent if p != remove]
-        elif file_path and file_path not in recent:
-            recent.append(file_path)
-        if file_path:
-            # Move to end (most recent)
-            recent = [p for p in recent if p != file_path] + [file_path]
+            recent = [p for p in recent
+                       if not (isinstance(p, dict) and p.get("path_hash") == hashlib.sha256(remove.encode()).hexdigest()[:16])
+                       and p != remove]
+        elif file_path:
+            entry = {
+                "basename": os.path.basename(file_path),
+                "path_hash": hashlib.sha256(file_path.encode()).hexdigest()[:16],
+            }
+            recent = [p for p in recent
+                       if not (isinstance(p, dict) and p.get("path_hash") == entry["path_hash"])
+                       and p != file_path]
+            recent.append(entry)
         Config.set("recent_vaults", recent[-10:])

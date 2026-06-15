@@ -30,9 +30,13 @@ class MainWindow(QMainWindow):
             lock_memory()
         disable_core_dumps()
 
+        if Config.get("block_screen_capture", True):
+            set_screen_capture_blocking(int(self.winId()), True)
+
         self.manager = VaultManager()
         self.idle_detector = IdleDetector(self)
         self.idle_detector.idle_timeout.connect(self._on_idle_timeout)
+        self.idle_detector.sleep_detected.connect(self._on_sleep)
         self.panic_shortcut = None
         self.sidebar = None
 
@@ -47,6 +51,8 @@ class MainWindow(QMainWindow):
             self.panic_shortcut = None
 
         dialog = UnlockDialog(self.manager, parent=None)
+        if Config.get("block_screen_capture", True):
+            set_screen_capture_blocking(int(dialog.winId()), True)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._build_ui()
             self._show_vault()
@@ -125,7 +131,7 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         self.idle_detector.reset()
-        QTimer.singleShot(500, self._start_idle_detector)
+        self._start_idle_detector()
 
     def _start_idle_detector(self):
         try:
@@ -157,8 +163,13 @@ class MainWindow(QMainWindow):
             self.manager.lock_active_vault()
             self._on_vault_locked()
 
+    def _on_sleep(self):
+        if Config.get("lock_on_sleep", True):
+            if self.manager.active_vault:
+                self.manager.lock_active_vault()
+                self._on_vault_locked()
+
     def _panic_action(self):
-        QApplication.clipboard().clear()
         if self.manager.active_vault:
             self.manager.lock_active_vault()
             self._on_vault_locked()
